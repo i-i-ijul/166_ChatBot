@@ -1,11 +1,12 @@
 
 const express = require("express");
 const dotenv = require("dotenv");
+const serverless = require("serverless-http");
 
 dotenv.config();
 
 const app = express();
-const port = 3000;
+const port = process.env.PORT || 3000;
 
 app.use(express.json());
 app.use(express.static("public"));
@@ -26,21 +27,20 @@ app.post("/api/chat", async (req, res) => {
             });
         }
 
-        if (!process.env.OPENROUTER_API_KEY) {
+        if (!process.env.GROQ_API_KEY) {
             return res.status(500).json({
                 error: "API key belum diatur di file .env"
             });
         }
 
-        // Request ke OpenRouter
         const response = await fetch(
-            "https://openrouter.ai/api/v1/chat/completions",
+            "https://console.groq.com/keys",
             {
                 method: "POST",
 
                 headers: {
                     "Content-Type": "application/json",
-                    "Authorization": `Bearer ${process.env.OPENROUTER_API_KEY}`
+                    "Authorization": `Bearer ${process.env.GROQ_API_KEY}`
                 },
 
                 body: JSON.stringify({
@@ -55,13 +55,22 @@ app.post("/api/chat", async (req, res) => {
 
         // Cek error OpenRouter
         if (!response.ok) {
-            const errorData = await response.text();
+            let errorText = "";
 
-            console.error("OpenRouter Error:", errorData);
+            try {
+                errorText = await response.text();
+            } catch (_) {
+                errorText = "[tidak bisa baca response]";
+            }
 
-            return res.status(response.status).json({
-                error: errorData
-            });
+            // Kalau balasan dari Vercel/Express bukan JSON, tampilin HTML-nya
+            const isHtml = /<!DOCTYPE/i.test(errorText) || /<html/i.test(errorText);
+            const msg = isHtml
+                ? `Server merespons format yang salah (${response.status}): ${errorText.slice(0, 200)}`
+                : errorText;
+
+            console.error("Groq Error:", msg);
+            return res.status(response.status).json({ error: msg });
         }
 
         // Header SSE
@@ -168,6 +177,30 @@ app.post("/api/chat", async (req, res) => {
     }
 });
 
-app.listen(port, () => {
-    console.log(`Server berjalan di http://localhost:${port}`);
+// Middleware error handling untuk Express
+app.use((err, req, res, next) => {
+    console.error("Server error:", err);
+    if (res.headersSent) {
+        return res.status(500).json({ error: "Terjadi kesalahan pada server" });
+    }
+    res.status(500).json({ error: err.message || "Terjadi kesalahan" });
 });
+
+// Lokal (npm start / node index.js)
+if (require.main === module) {
+    app.listen(port, () => {
+        console.log(`Server berjalan di http://localhost:${port}`);
+    });
+}
+
+// Untuk Vercel (serverless): jalankan lewat serverless-http
+module.exports = async (req, res) => {
+    return serverless(app)(req, res);
+};
+
+// Lokal (npm start / node index.js)
+if (require.main === module) {
+    app.listen(port, () => {
+        console.log(`Server berjalan di http://localhost:${port}`);
+    });
+}
